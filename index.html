@@ -391,27 +391,86 @@
     });
 
     const topicDialog = document.getElementById('topicDialog');
+    const topicDialogShell = topicDialog.querySelector('.topic-dialog-shell');
     const topicDialogTitle = document.getElementById('topicDialogTitle');
     const topicDialogContent = document.getElementById('topicDialogContent');
     let activeTopic = null;
-    let topicDialogAnimation = null;
+    let topicDialogAnimations = [];
+    let topicDialogMorph = null;
     let isTopicDialogClosing = false;
 
+    function clearTopicDialogAnimations() {
+      topicDialogAnimations.forEach((animation) => animation.cancel());
+      topicDialogAnimations = [];
+      topicDialogMorph?.remove();
+      topicDialogMorph = null;
+    }
+
     function animateTopicDialog(toggle, closing = false) {
-      if (reducedMotion || typeof topicDialog.animate !== 'function') return null;
-      topicDialogAnimation?.cancel();
+      if (reducedMotion || typeof topicDialogShell.animate !== 'function') return null;
+      const currentShellStyle = getComputedStyle(topicDialogShell);
+      const currentShellOpacity = Number.parseFloat(currentShellStyle.opacity);
+      const currentShellTransform = currentShellStyle.transform;
+      clearTopicDialogAnimations();
       const source = toggle.getBoundingClientRect();
-      const target = topicDialog.getBoundingClientRect();
-      const offsetX = source.left + source.width / 2 - target.left - target.width / 2;
-      const offsetY = source.top + source.height / 2 - target.top - target.height / 2;
-      const scale = Math.min(0.65, source.width / target.width);
-      const from = { opacity: 0, transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` };
-      const to = { opacity: 1, transform: 'translate(0, 0) scale(1)' };
-      topicDialogAnimation = topicDialog.animate(closing ? [to, from] : [from, to], {
-        duration: 340,
-        easing: 'cubic-bezier(.2,.75,.25,1)'
+      const target = topicDialogShell.getBoundingClientRect();
+      const start = closing ? target : source;
+      const end = closing ? source : target;
+      if (!start.width || !start.height || !end.width || !end.height) return null;
+
+      const morph = toggle.cloneNode(true);
+      morph.classList.add('topic-dialog-morph');
+      morph.setAttribute('aria-hidden', 'true');
+      morph.tabIndex = -1;
+      Object.assign(morph.style, {
+        position: 'fixed',
+        left: `${start.left}px`,
+        top: `${start.top}px`,
+        width: `${start.width}px`,
+        height: `${start.height}px`,
+        minHeight: '0',
+        margin: '0',
+        zIndex: '2',
+        transformOrigin: 'top left',
+        pointerEvents: 'none'
       });
-      return topicDialogAnimation;
+      topicDialog.append(morph);
+      topicDialogMorph = morph;
+
+      const offsetX = end.left - start.left;
+      const offsetY = end.top - start.top;
+      const scaleX = end.width / start.width;
+      const scaleY = end.height / start.height;
+      const transform = `translate(${offsetX}px, ${offsetY}px) scale(${scaleX}, ${scaleY})`;
+      const sourceRadius = getComputedStyle(toggle).borderRadius;
+      const targetRadius = getComputedStyle(topicDialogShell).borderRadius;
+      const duration = 340;
+      const easing = closing ? 'cubic-bezier(.42,0,.58,1)' : 'cubic-bezier(.2,.75,.25,1)';
+      const morphAnimation = morph.animate(closing ? [
+        { opacity: currentShellOpacity * 0.85, transform: 'none', borderRadius: targetRadius },
+        { opacity: 0, transform, borderRadius: sourceRadius }
+      ] : [
+        { opacity: 1, transform: 'none', borderRadius: sourceRadius },
+        { opacity: 0, transform, borderRadius: targetRadius }
+      ], { duration, easing });
+      const shellAnimation = topicDialogShell.animate(closing ? [
+        { opacity: currentShellOpacity, transform: currentShellTransform },
+        { opacity: 0, transform: 'translateY(6px)' }
+      ] : [
+        { opacity: 0, transform: 'translateY(8px)' },
+        { opacity: 1, transform: 'translateY(0)' }
+      ], { duration, easing });
+
+      topicDialogAnimations = [morphAnimation, shellAnimation];
+      morphAnimation.addEventListener('finish', () => {
+        if (closing) {
+          topicDialog.close();
+        } else if (topicDialogMorph === morph) {
+          morph.remove();
+          topicDialogMorph = null;
+        }
+      }, { once: true });
+      return morphAnimation;
     }
 
     function closeTopicDialog() {
@@ -427,6 +486,7 @@
         topicDialog.close();
         return;
       }
+      topicDialog.classList.add('is-closing');
       animation.addEventListener('finish', () => topicDialog.close(), { once: true });
     }
 
@@ -447,8 +507,8 @@
       if (event.target === topicDialog) closeTopicDialog();
     });
     topicDialog.addEventListener('close', () => {
-      topicDialogAnimation?.cancel();
-      topicDialogAnimation = null;
+      topicDialog.classList.remove('is-closing');
+      clearTopicDialogAnimations();
       isTopicDialogClosing = false;
       if (!activeTopic) return;
       const { content, panel, toggle, topic } = activeTopic;
