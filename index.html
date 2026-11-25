@@ -391,20 +391,125 @@
     });
 
     const topicDialog = document.getElementById('topicDialog');
+    const topicDialogShell = topicDialog.querySelector('.topic-dialog-shell');
     const topicDialogTitle = document.getElementById('topicDialogTitle');
     const topicDialogContent = document.getElementById('topicDialogContent');
     let activeTopic = null;
+    let topicDialogAnimations = [];
+    let topicDialogMorph = null;
+    let isTopicDialogClosing = false;
+
+    function clearTopicDialogAnimations() {
+      topicDialogAnimations.forEach((animation) => animation.cancel());
+      topicDialogAnimations = [];
+      topicDialogMorph?.remove();
+      topicDialogMorph = null;
+    }
+
+    function animateTopicDialog(toggle, closing = false) {
+      if (reducedMotion || typeof topicDialogShell.animate !== 'function') return null;
+      const currentShellStyle = getComputedStyle(topicDialogShell);
+      const currentShellOpacity = Number.parseFloat(currentShellStyle.opacity);
+      clearTopicDialogAnimations();
+      const source = toggle.getBoundingClientRect();
+      const target = topicDialog.getBoundingClientRect();
+      const start = closing ? target : source;
+      const end = closing ? source : target;
+      if (!start.width || !start.height || !end.width || !end.height) return null;
+
+      const morph = toggle.cloneNode(true);
+      morph.classList.add('topic-dialog-morph');
+      morph.setAttribute('aria-hidden', 'true');
+      morph.tabIndex = -1;
+      Object.assign(morph.style, {
+        position: 'fixed',
+        left: `${start.left}px`,
+        top: `${start.top}px`,
+        width: `${start.width}px`,
+        height: `${start.height}px`,
+        minHeight: '0',
+        margin: '0',
+        zIndex: '2',
+        transformOrigin: 'top left',
+        pointerEvents: 'none'
+      });
+      topicDialog.append(morph);
+      topicDialogMorph = morph;
+
+      const offsetX = end.left - start.left;
+      const offsetY = end.top - start.top;
+      const scaleX = end.width / start.width;
+      const scaleY = end.height / start.height;
+      const transform = `translate(${offsetX}px, ${offsetY}px) scale(${scaleX}, ${scaleY})`;
+      const sourceRadius = getComputedStyle(toggle).borderRadius;
+      const targetRadius = getComputedStyle(topicDialogShell).borderRadius;
+      const morphAnimation = morph.animate(closing ? [
+        { opacity: currentShellOpacity * 0.85, transform: 'none', borderRadius: targetRadius },
+        { opacity: 0, transform, borderRadius: sourceRadius }
+      ] : [
+        { opacity: 1, transform: 'none', borderRadius: sourceRadius },
+        { opacity: 0, transform, borderRadius: targetRadius }
+      ], {
+        duration: 380,
+        easing: 'cubic-bezier(.2,.75,.25,1)'
+      });
+      const shellAnimation = topicDialogShell.animate(closing ? [
+        { opacity: currentShellOpacity, transform: currentShellStyle.transform },
+        { opacity: 0, transform: 'translateY(8px)' }
+      ] : [
+        { opacity: 0, transform: 'translateY(8px)' },
+        { opacity: 1, transform: 'translateY(0)' }
+      ], {
+        duration: 280,
+        easing: 'cubic-bezier(.2,.75,.25,1)'
+      });
+      topicDialogAnimations = [morphAnimation, shellAnimation];
+      morphAnimation.addEventListener('finish', () => {
+        if (closing) {
+          topicDialog.close();
+        } else if (topicDialogMorph === morph) {
+          morph.remove();
+          topicDialogMorph = null;
+        }
+      }, { once: true });
+      return morphAnimation;
+    }
+
+    function closeTopicDialog() {
+      if (!topicDialog.open || isTopicDialogClosing) return;
+      if (reducedMotion || !activeTopic) {
+        topicDialog.close();
+        return;
+      }
+
+      isTopicDialogClosing = true;
+      const animation = animateTopicDialog(activeTopic.toggle, true);
+      if (!animation) {
+        topicDialog.close();
+        return;
+      }
+      animation.addEventListener('finish', () => topicDialog.close(), { once: true });
+    }
 
     document.getElementById('closeTopicDialog').addEventListener('click', () => {
-      topicDialog.close();
+      closeTopicDialog();
     });
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && topicDialog.open) topicDialog.close();
+      if (event.key === 'Escape' && topicDialog.open) {
+        event.preventDefault();
+        closeTopicDialog();
+      }
+    });
+    topicDialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      closeTopicDialog();
     });
     topicDialog.addEventListener('click', (event) => {
-      if (event.target === topicDialog) topicDialog.close();
+      if (event.target === topicDialog) closeTopicDialog();
     });
     topicDialog.addEventListener('close', () => {
+      clearTopicDialogAnimations();
+      isTopicDialogClosing = false;
       if (!activeTopic) return;
       const { content, panel, toggle, topic } = activeTopic;
       panel.hidden = true;
@@ -458,6 +563,7 @@
         toggle.setAttribute('aria-expanded', 'true');
         document.body.classList.add('has-topic-dialog');
         topicDialog.showModal();
+        animateTopicDialog(toggle);
       });
     });
 
